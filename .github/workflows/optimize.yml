@@ -1,0 +1,44 @@
+name: Email Optimization
+
+on:
+  schedule:
+    - cron: "0 2,6,10,14,18,22 * * *"  # Every 4 hours (6 runs/day)
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run optimizer
+        env:
+          INSTANTLY_API_KEY: ${{ secrets.INSTANTLY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python orchestrator.py
+
+      - name: Commit results
+        run: |
+          git config user.name "email-optimizer[bot]"
+          git config user.email "bot@users.noreply.github.com"
+          git add config/baseline.md data/active_experiments.json results/results.log results/experiments/ data/contacted.db
+          git diff --staged --quiet || git commit -m "exp $(date +%Y-%m-%d-%H): auto-optimize"
+          git push
