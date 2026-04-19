@@ -2,7 +2,7 @@ name: Email Optimization
 
 on:
   schedule:
-    - cron: "0 2,6,10,14,18,22 * * *"  # Every 4 hours (6 runs/day)
+    - cron: "0 0,12 * * *"  # Every 12 hours (2 runs/day: 00:00 + 12:00 UTC)
   workflow_dispatch:  # manual trigger
 
 jobs:
