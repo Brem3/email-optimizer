@@ -29,7 +29,7 @@ EXPECTED_DELAYS = [0]
 EXPECTED_SETTINGS = {
     "daily_limit": 60,
     "email_gap": 10,
-    "timezone": "Europe/Paris",
+    "timezone": "Africa/Ceuta",
     "schedule_start": "09:00",
     "schedule_end": "17:00",
 }
