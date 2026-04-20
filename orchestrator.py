@@ -223,6 +223,17 @@ def draw_leads(experiment_id: str, count: int) -> list:
     return leads
 
 
+def pick_leads(count: int) -> list:
+    leads = sc.pick_leads(count)
+    log.info("Picked %d leads from sheet (not yet marked contacted)", len(leads))
+    return leads
+
+
+def mark_contacted(leads: list, experiment_id: str) -> None:
+    sc.mark_contacted(leads, experiment_id)
+    log.info("Marked %d leads as contacted for %s", len(leads), experiment_id)
+
+
 # ─────────────────────────────────────────────
 # PARSING HELPERS
 # ─────────────────────────────────────────────
@@ -890,6 +901,12 @@ def phase_deploy(challenger_config: str):
         "timezone": settings["timezone"],
     }
 
+    # Pick leads FIRST without marking them contacted — if anything fails below
+    # the leads stay available for the next run.
+    log.info("Picking %d leads per arm from pool...", LEADS_PER_ARM)
+    baseline_leads = pick_leads(LEADS_PER_ARM)
+    challenger_leads = pick_leads(LEADS_PER_ARM)
+
     log.info("Creating baseline campaign...")
     b_campaign = ic.create_campaign(
         name=f"B {experiment_id.replace('exp-2026-', '')}",
@@ -912,14 +929,26 @@ def phase_deploy(challenger_config: str):
     challenger_id = c_campaign["id"]
     log.info("Challenger campaign created: %s", challenger_id)
 
-    # Draw leads from pool
-    log.info("Drawing %d leads per arm from pool...", LEADS_PER_ARM)
-    baseline_leads = draw_leads(f"{experiment_id}-baseline", LEADS_PER_ARM)
-    challenger_leads = draw_leads(f"{experiment_id}-challenger", LEADS_PER_ARM)
-
     log.info("Adding leads to campaigns...")
-    b_added = ic.add_leads(baseline_id, baseline_leads)
-    c_added = ic.add_leads(challenger_id, challenger_leads)
+    try:
+        b_added = ic.add_leads(baseline_id, baseline_leads)
+        c_added = ic.add_leads(challenger_id, challenger_leads)
+    except Exception:
+        log.error(
+            "Lead upload failed. Orphan campaigns to clean up manually: "
+            "baseline=%s challenger=%s. Leads NOT marked contacted — pool unchanged.",
+            baseline_id, challenger_id,
+        )
+        try:
+            ic.pause_campaign(baseline_id)
+            ic.pause_campaign(challenger_id)
+        except Exception as pause_err:
+            log.warning("Could not pause orphan campaigns: %s", pause_err)
+        raise
+
+    # Leads are safely uploaded to Instantly — now it's safe to mark contacted.
+    mark_contacted(baseline_leads, f"{experiment_id}-baseline")
+    mark_contacted(challenger_leads, f"{experiment_id}-challenger")
 
     # Verify upload counts — at least 80% must succeed
     min_leads = int(LEADS_PER_ARM * 0.8)

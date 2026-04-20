@@ -211,7 +211,7 @@ def add_leads(campaign_id, leads):
             for k, v in lead.items():
                 if not v:
                     continue
-                if k == "email":
+                if k == "email" or k.startswith("_"):
                     continue
                 if k in STANDARD_FIELDS:
                     obj[k] = v

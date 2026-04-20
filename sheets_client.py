@@ -155,11 +155,14 @@ def pool_title_breakdown(top: int = 15) -> list[tuple[str, int]]:
     return counts.most_common(top)
 
 
-def draw_leads(experiment_id: str, count: int) -> list[dict]:
-    """Draw `count` available leads. Marks them in sheet column F + local DB.
+def pick_leads(count: int) -> list[dict]:
+    """Reserve `count` available leads in memory. Does NOT touch the sheet or DB.
 
-    Returns list of lead dicts shaped for instantly_client.add_leads:
-      {email, first_name, last_name, company_name, sexe}
+    Caller must call mark_contacted(leads, experiment_id) after the leads are
+    successfully uploaded to Instantly. Until then the leads remain available.
+
+    Returns list of lead dicts. Each dict carries an internal `_sheet_row` key
+    used by mark_contacted.
     """
     avail = _available_rows()
     if len(avail) < count:
@@ -167,29 +170,7 @@ def draw_leads(experiment_id: str, count: int) -> list[dict]:
             f"Lead pool exhausted: need {count}, only {len(avail)} available. "
             f"Add more leads to the '{TAB_NAME}' tab or reuse contacted ones."
         )
-
     drawn = random.sample(avail, count)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    marker = f"contacted:{experiment_id}:{stamp}"
-
-    ws = _worksheet()
-    cells_to_update = [
-        gspread.cell.Cell(row=r["sheet_row"], col=CONTACTED_COL_INDEX, value=marker)
-        for r in drawn
-    ]
-    ws.update_cells(cells_to_update, value_input_option="USER_ENTERED")
-
-    conn = _ensure_db()
-    conn.executemany(
-        "INSERT OR IGNORE INTO contacted (email, experiment_id, contacted_at) VALUES (?, ?, ?)",
-        [(r["email"], experiment_id, stamp) for r in drawn],
-    )
-    conn.commit()
-    conn.close()
-
-    for r in drawn:
-        r["contacted"] = marker
-
     return [
         {
             "email": r["email"],
@@ -197,9 +178,47 @@ def draw_leads(experiment_id: str, count: int) -> list[dict]:
             "last_name": r["last_name"],
             "company_name": r["company_name"],
             "Sexe": r["sexe"],
+            "_sheet_row": r["sheet_row"],
         }
         for r in drawn
     ]
+
+
+def mark_contacted(leads: list[dict], experiment_id: str) -> None:
+    """Mark leads as contacted: column F in sheet + local DB. Idempotent.
+
+    Call this ONLY after the leads have been successfully handed off to
+    Instantly (or any other downstream system). If it's called prematurely,
+    the leads are burned — they can't be reused.
+    """
+    if not leads:
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    marker = f"contacted:{experiment_id}:{stamp}"
+
+    ws = _worksheet()
+    cells_to_update = [
+        gspread.cell.Cell(row=lead["_sheet_row"], col=CONTACTED_COL_INDEX, value=marker)
+        for lead in leads
+        if lead.get("_sheet_row")
+    ]
+    if cells_to_update:
+        ws.update_cells(cells_to_update, value_input_option="USER_ENTERED")
+
+    conn = _ensure_db()
+    conn.executemany(
+        "INSERT OR IGNORE INTO contacted (email, experiment_id, contacted_at) VALUES (?, ?, ?)",
+        [(lead["email"], experiment_id, stamp) for lead in leads],
+    )
+    conn.commit()
+    conn.close()
+
+
+def draw_leads(experiment_id: str, count: int) -> list[dict]:
+    """Legacy wrapper: pick + mark in one step. Prefer pick_leads + mark_contacted."""
+    leads = pick_leads(count)
+    mark_contacted(leads, experiment_id)
+    return leads
 
 
 def reset_cache():
