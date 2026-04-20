@@ -52,6 +52,8 @@ def _post(path, payload, retries=3):
             log.warning("Rate limited on POST %s, waiting 30s (attempt %d)", path, attempt + 1)
             time.sleep(30)
             continue
+        if not r.ok:
+            log.error("POST %s → %d: %s", path, r.status_code, r.text[:1000])
         r.raise_for_status()
         return r.json()
     raise RuntimeError(f"POST {path} failed after {retries} retries (429)")
